@@ -2,3 +2,4 @@
 /Cargo.lock
 .idea/
 unt-rust-ed.iml
+*.swp

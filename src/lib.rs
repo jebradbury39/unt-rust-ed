@@ -4,9 +4,10 @@ use std::fs::{self, File};
 use std::io::Write;
 use std::path::{Path, PathBuf};
 use std::process::Command;
+use std::time::Duration;
 
-use extism::{Manifest, Plugin};
-use extism::manifest::MemoryOptions;
+use extism::{Manifest, Plugin, Wasm, ToBytes, FromBytes};
+use extism_manifest::MemoryOptions;
 
 use tempfile::TempDir;
 
@@ -28,27 +29,33 @@ impl UntrustedRustProject {
 
     pub fn new(rust_code: &str) -> Self {
         Self {
-            rust_code,
-            ..
+            rust_code: rust_code.into(),
+            runtime_memory_options: MemoryOptions::default(),
+            runtime_timeout_ms: None,
         }
     }
 
     /// Converts the modules into compiled modules containing WASM
-    pub fn compile(self) -> Result<CompiledUntrustedRustProject> {
+    pub fn compile(&self) -> Result<CompiledUntrustedRustProject> {
         // create temp directory
-        let tmp_cargo_dir = TempDir::new_in(".")?;
+        let tmp_cargo_dir = TempDir::new_in(".").map_err(|err| UntRustedError::IoError {
+   resource: "TempDir".into(),
+   err,
+   })?;
 
         // setup cargo project by creating Cargo.toml in temp directory
         // extism-pdk = "0.3.4"
         // extism-pdk-derive = "0.3.1"
         let cargo_toml_path = tmp_cargo_dir.path().join("Cargo.toml");
-        let mut cargo_toml_file = File::create(cargo_toml_path)?;
 
-        Self::write_cargo_toml(&mut cargo_toml_file)?;
+        Self::write_cargo_toml(cargo_toml_path)?;
 
         // mkdir 'src' under tmp_cargo_dir
         let cargo_src_path = tmp_cargo_dir.path().join("src");
-        fs::create_dir(cargo_src_path)?;
+        fs::create_dir(&cargo_src_path).map_err(|err| UntRustedError::IoError {
+   resource: format!("{:?}", cargo_src_path),
+   err,
+   })?;
 
         // create modules in src/lib.rs file in temp directory.
         // For every exported function, create a copy with the module underscore prefix, and tag it as wasm-exported
@@ -58,26 +65,36 @@ impl UntrustedRustProject {
         // compile project to wasm by spawning cargo as a subprocess
         let built_wasm_file_path: PathBuf = Self::cargo_build_to_wasm(&tmp_cargo_dir)?;
 
-        let built_wasm_bytes = fs::read(&built_wasm_file_path)?;
+        let built_wasm_bytes: Vec<u8> = fs::read(&built_wasm_file_path).map_err(|err| UntRustedError::IoError {
+   resource: format!("{:?}", built_wasm_file_path),
+   err,
+   })?;
 
-        let manifest = Manifest::new(built_wasm_bytes)
+      let wasm = Wasm::data(built_wasm_bytes);
+
+        let manifest = Manifest::new(vec![wasm])
             .disallow_all_hosts()
-            .with_memory_options(self.runtime_memory_options);
+            .with_memory_options(self.runtime_memory_options.clone());
 
         let manifest = if let Some(runtime_timeout_ms) = self.runtime_timeout_ms {
-            manifest.with_timeout(runtime_timeout_ms.into())
+            manifest.with_timeout(Duration::from_millis(runtime_timeout_ms))
         } else {
             manifest
         };
 
         let plugin = Plugin::new(&manifest, [], true)?;
 
-        return CompiledUntrustedRustProject {
+        return Ok(CompiledUntrustedRustProject {
             plugin,
-        };
+        });
     }
 
-    fn write_cargo_toml(cargo_toml_file: &mut File) -> Result<()> {
+    fn write_cargo_toml<P: AsRef<Path>>(cargo_toml_path: P) -> Result<()> {
+      let mut cargo_toml_file = File::create(&cargo_toml_path).map_err(|err| UntRustedError::IoError {
+   resource: format!("{:?}", cargo_toml_path.as_ref()),
+   err,
+   })?;
+
         let content = "[package]
     name = \"test-wasm\"
     version = \"0.1.0\"
@@ -88,20 +105,43 @@ impl UntrustedRustProject {
 
     [dependencies]";
 
-        cargo_toml_file.write(content.as_bytes())?;
+        cargo_toml_file.write_all(content.as_bytes()).map_err(|err| UntRustedError::IoError {
+   resource: format!("{:?}", cargo_toml_path.as_ref()),
+   err,
+   })?;
 
         return Ok(());
     }
 
-    fn write_rust_code_to_cargo_dir<P: AsRef<Path>>(self, cargo_src_path: P) -> Result<()> {
+    fn write_rust_code_to_cargo_dir<P: AsRef<Path>>(&self, cargo_src_path: P) -> Result<()> {
 
+        let lib_rs_path = cargo_src_path.as_ref().join("lib.rs");
+        let mut lib_rs_file = File::create(&lib_rs_path).map_err(|err| UntRustedError::IoError {
+   resource: format!("{:?}", lib_rs_path),
+   err,
+   })?;
+
+        lib_rs_file.write_all(self.rust_code.as_bytes()).map_err(|err| UntRustedError::IoError {
+   resource: format!("{:?}", lib_rs_path),
+   err,
+   })?;
+
+        return Ok(());
     }
 
-    fn cargo_build_to_wasm<P: AsRef<Path>>(cwd: P) -> Result<PathBuf> {
+    fn cargo_build_to_wasm<P: AsRef<Path>>(cargo_dir: P) -> Result<PathBuf> {
         let cargo_output = Command::new("cargo")
             .args(["build", "--target", "wasm32-unknown-unknown", "--release"])
-            .current_dir(&tmp_cargo_dir)
-            .output()?;
+            .current_dir(cargo_dir)
+            .output().map_err(|err| UntRustedError::IoError {
+   resource: "cargo build".into(),
+   err,
+   })?;
+
+        // parse cargo output, find target
+        println!("cargo build output:\n{:?}", cargo_output);
+
+        return Ok(PathBuf::from("."));
     }
 }
 
@@ -112,16 +152,16 @@ pub struct CompiledUntrustedRustProject {
 impl CompiledUntrustedRustProject {
     /// fn_name may have module prefixes (e.g. `foo::exported_fn`)
     /// The '::' is converted to '_'
-    pub fn call(
-        &mut self,
+    pub fn call<'a, 'b, T: ToBytes<'a>, U: FromBytes<'b>>(
+        &'b mut self,
         fn_name: impl AsRef<str>,
-        input: impl AsRef<[u8]>,
-    ) -> Result<Option<&[u8]>, Error> {
-        let exported_fn_name = fn_name.replace("::", "_");
-        self.plugin.call_map(exported_fn_name, input, |x| Ok(x))
+        input: T,
+    ) -> Result<U> {
+        let exported_fn_name = fn_name.as_ref().replace("::", "_");
+        return Ok(self.plugin.call(&exported_fn_name, input)?);
     }
-}
 
+}
 /* Usage:
 
 let rust_code1 = """mod player1 {

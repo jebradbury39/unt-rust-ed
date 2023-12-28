@@ -7,6 +7,14 @@ pub enum UntRustedError {
     IoError {
         resource: String,
         err: std::io::Error,
+    },
+    #[error("Extism error: {0}")]
+    Extism(extism::Error),   
+}
+
+impl From<extism::Error> for UntRustedError {
+    fn from(err: extism::Error) -> Self {
+        Self::Extism(err)
     }
 }
 
