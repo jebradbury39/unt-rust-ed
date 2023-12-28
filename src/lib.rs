@@ -103,7 +103,8 @@ impl UntrustedRustProject {
     [lib]
     crate-type = [\"cdylib\"]
 
-    [dependencies]";
+    [dependencies]
+    extism-pdk = \"1.0.0-rc1\"";
 
         cargo_toml_file.write_all(content.as_bytes()).map_err(|err| UntRustedError::IoError {
    resource: format!("{:?}", cargo_toml_path.as_ref()),
@@ -132,7 +133,7 @@ impl UntrustedRustProject {
     fn cargo_build_to_wasm<P: AsRef<Path>>(cargo_dir: P) -> Result<PathBuf> {
         let cargo_output = Command::new("cargo")
             .args(["build", "--target", "wasm32-unknown-unknown", "--release"])
-            .current_dir(cargo_dir)
+            .current_dir(&cargo_dir)
             .output().map_err(|err| UntRustedError::IoError {
    resource: "cargo build".into(),
    err,
@@ -141,7 +142,7 @@ impl UntrustedRustProject {
         // parse cargo output, find target
         println!("cargo build output:\n{:?}", cargo_output);
 
-        return Ok(PathBuf::from("."));
+        return Ok(cargo_dir.as_ref().join("target/wasm32-unknown-unknown/release/test-wasm.wasm"));
     }
 }
 
@@ -182,3 +183,20 @@ let mut compiled_project = project.compile();
 let outputs = compiled_project.call("player1::entry", inputs);
  */
 
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_basic() {
+        let rust_code = "use extism_pdk::*;\n#[plugin_fn]\npub fn add2(a: i32) -> FnResult<i32> {\nreturn Ok(a + 2);\n}";
+
+        let project = UntrustedRustProject::new(rust_code);
+
+        let mut compiled_project = project.compile().unwrap();
+
+        let outputs: i32 = compiled_project.call("add", 10).unwrap();
+
+        println!("{:?}", outputs);
+    }
+}
