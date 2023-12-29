@@ -13,7 +13,7 @@ use extism_manifest::MemoryOptions;
 use tempfile::TempDir;
 
 use syn::Token;
-use syn::token::Paren;
+use syn::token::{Paren, Bracket};
 use syn::punctuated::Punctuated;
 use syn::__private::Span;
 
@@ -153,7 +153,7 @@ impl UntrustedRustProject {
             use_token: Token![use](Span::call_site()),
             leading_colon: None,
             tree: syn::UseTree::Path(syn::UsePath {
-                ident: syn::Ident::new("extism-pdk", Span::call_site()),
+                ident: syn::Ident::new("extism_pdk", Span::call_site()),
                 colon2_token: Token![::](Span::call_site()),
                 tree: Box::new(syn::UseTree::Glob(syn::UseGlob {
                     star_token: Token![*](Span::call_site()),
@@ -165,13 +165,17 @@ impl UntrustedRustProject {
 
         Self::tag_functions_for_export(&mut ast.items, "")?;
 
+        let new_rust_code = prettyplease::unparse(&ast);
+
+        println!("new_rust:\n{}", new_rust_code);
+
         let lib_rs_path = cargo_src_path.as_ref().join("lib.rs");
         let mut lib_rs_file = File::create(&lib_rs_path).map_err(|err| UntRustedError::IoError {
    resource: format!("{:?}", lib_rs_path),
    err,
    })?;
 
-        lib_rs_file.write_all(self.rust_code.as_bytes()).map_err(|err| UntRustedError::IoError {
+        lib_rs_file.write_all(new_rust_code.as_bytes()).map_err(|err| UntRustedError::IoError {
    resource: format!("{:?}", lib_rs_path),
    err,
    })?;
@@ -185,10 +189,15 @@ impl UntrustedRustProject {
 
             match &mut items[item_idx] {
                 syn::Item::Mod(item_mod) => if let Some(content) = &mut item_mod.content {
+                    let item_mod_name = item_mod.ident.to_string();
+
                     let new_mod_names = if mod_names.is_empty() {
-                        item_mod.ident.to_string()
+                        item_mod_name
                     } else {
-                        format!("{}__{}", mod_names, item_mod.ident.to_string())
+                        if item_mod_name.is_empty() {
+                            panic!("mod name should not be empty");
+                        }
+                        format!("{}__{}", mod_names, item_mod_name)
                     };
 
                     Self::tag_functions_for_export(&mut content.1, &new_mod_names)?;
@@ -250,8 +259,25 @@ impl UntrustedRustProject {
                             stmts: vec![old_fn_call],
                         };
 
+                        let mut new_fn_attrs_segments = Punctuated::new();
+                        new_fn_attrs_segments.push(syn::PathSegment {
+                            ident: syn::Ident::new("plugin_fn", Span::call_site()),
+                            arguments: syn::PathArguments::None,
+                        });
+
+                        let mut new_fn_attrs = item_fn.attrs.clone();
+                        new_fn_attrs.push(syn::Attribute {
+                            pound_token: Token![#](Span::call_site()),
+                            style: syn::AttrStyle::Outer,
+                            bracket_token: Bracket::default(),
+                            meta: syn::Meta::Path(syn::Path {
+                                leading_colon: None,
+                                segments: new_fn_attrs_segments,
+                            }),
+                        });
+
                         let new_fn_item = syn::Item::Fn(syn::ItemFn {
-                            attrs: item_fn.attrs.clone(),
+                            attrs: new_fn_attrs,
                             vis: item_fn.vis.clone(),
                             sig: new_fn_sig,
                             block: Box::new(new_fn_block),
@@ -322,7 +348,12 @@ impl CompiledUntrustedRustProject {
         fn_name: impl AsRef<str>,
         input: T,
     ) -> Result<U> {
-        let exported_fn_name = fn_name.as_ref().replace("::", "_");
+        let exported_fn_name = if fn_name.as_ref().contains("::") {
+            fn_name.as_ref().replace("::", "_")
+        } else {
+            format!("__{}", fn_name.as_ref())
+        };
+
         return Ok(self.plugin.call(&exported_fn_name, input)?);
     }
 
