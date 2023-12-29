@@ -209,6 +209,32 @@ impl UntrustedRustProject {
 
                         let mut new_fn_sig = item_fn.sig.clone();
                         new_fn_sig.ident = syn::Ident::new(&new_fn_name, Span::call_site());
+                        new_fn_sig.output = syn::ReturnType::Type(Token![->](Span::call_site()), Box::new(syn::Type::Path(syn::TypePath {
+                            qself: None,
+                            path: syn::Path {
+                                leading_colon: None,
+                                segments: {
+                                    let mut segments = Punctuated::new();
+                                    segments.push(syn::PathSegment {
+                                        ident: syn::Ident::new("FnResult", Span::call_site()),
+                                        arguments: syn::PathArguments::AngleBracketed(syn::AngleBracketedGenericArguments {
+                                            colon2_token: None,
+                                            lt_token: Token![<](Span::call_site()),
+                                            args: {
+                                                let mut args = Punctuated::new();
+                                                args.push(syn::GenericArgument::Type(match &item_fn.sig.output {
+    syn::ReturnType::Default => panic!("not allowed"),
+    syn::ReturnType::Type(_, ty) => ty.deref().clone(),
+}));
+                                                args
+                                            },
+                                            gt_token: Token![>](Span::call_site()),
+                                        })
+                                    });
+                                    segments
+                                }
+                            }
+                        })));
 
                         let mut call_old_fn_args = Punctuated::new();
                         for param in &item_fn.sig.inputs {
@@ -240,7 +266,7 @@ impl UntrustedRustProject {
                             arguments: syn::PathArguments::None,
                         });
 
-                        let old_fn_call = syn::Stmt::Expr(syn::Expr::Call(syn::ExprCall {
+                        let old_fn_call = syn::Expr::Call(syn::ExprCall {
                             attrs: Vec::new(),
                             func: Box::new(syn::Expr::Path(syn::ExprPath {
                                 attrs: Vec::new(),
@@ -252,11 +278,36 @@ impl UntrustedRustProject {
                             })),
                             paren_token: Paren::default(),
                             args: call_old_fn_args,
+                        });
+
+                        let ok_wrapper_call = syn::Stmt::Expr(syn::Expr::Call(syn::ExprCall {
+                            attrs: Vec::new(),
+                            func: Box::new(syn::Expr::Path(syn::ExprPath {
+                                attrs: Vec::new(),
+                                qself: None,
+                                path: syn::Path {
+                                    leading_colon: None,
+                                    segments: {
+                                        let mut segments = Punctuated::new();
+                                        segments.push(syn::PathSegment {
+                                            ident: syn::Ident::new("Ok", Span::call_site()),
+                                            arguments: syn::PathArguments::None,
+                                        });
+                                        segments
+                                    },
+                                }
+                            })),
+                            paren_token: Paren::default(),
+                            args: {
+                                let mut args = Punctuated::new();
+                                args.push(old_fn_call);
+                                args
+                            }
                         }), None);
 
                         let new_fn_block = syn::Block {
                             brace_token: item_fn.block.brace_token.clone(),
-                            stmts: vec![old_fn_call],
+                            stmts: vec![ok_wrapper_call],
                         };
 
                         let mut new_fn_attrs_segments = Punctuated::new();
