@@ -11,6 +11,9 @@ use extism_manifest::MemoryOptions;
 
 use tempfile::TempDir;
 
+use syn::Token;
+use syn::__private::Span;
+
 use crate::error::*;
 
 /// Returns the number of bytes in a page of memory.
@@ -19,10 +22,27 @@ pub fn get_page_size() -> usize {
     return page_size::get();
 }
 
+#[derive(Default, Debug, Copy, Clone, Eq, PartialEq)]
+pub enum WasmCompileTarget {
+    #[default]
+    Lightweight,
+    Wasi,
+}
+
+impl WasmCompileTarget {
+    pub fn as_str(&self) -> &str {
+        match self {
+            Self::Lightweight => "wasm32-unknown-unknown",
+            Self::Wasi => "wasm32-wasi",
+        }
+    }
+}
+
 pub struct UntrustedRustProject {
     rust_code: String,
     runtime_memory_options: MemoryOptions,
     runtime_timeout_ms: Option<u64>,
+    target: WasmCompileTarget,
 }
 
 impl UntrustedRustProject {
@@ -32,6 +52,7 @@ impl UntrustedRustProject {
             rust_code: rust_code.into(),
             runtime_memory_options: MemoryOptions::default(),
             runtime_timeout_ms: None,
+            target: WasmCompileTarget::default(),           
         }
     }
 
@@ -63,7 +84,7 @@ impl UntrustedRustProject {
         self.write_rust_code_to_cargo_dir(&cargo_src_path)?;
 
         // compile project to wasm by spawning cargo as a subprocess
-        let built_wasm_file_path: PathBuf = Self::cargo_build_to_wasm(&tmp_cargo_dir)?;
+        let built_wasm_file_path: PathBuf = self.cargo_build_to_wasm(&tmp_cargo_dir)?;
 
         let built_wasm_bytes: Vec<u8> = fs::read(&built_wasm_file_path).map_err(|err| UntRustedError::IoError {
    resource: format!("{:?}", built_wasm_file_path),
@@ -116,6 +137,31 @@ impl UntrustedRustProject {
 
     fn write_rust_code_to_cargo_dir<P: AsRef<Path>>(&self, cargo_src_path: P) -> Result<()> {
 
+        let mut ast: syn::File = syn::parse_file(&self.rust_code)?;
+
+        println!("{:?}", ast);
+
+        // add validator
+
+        // update the ast
+        let use_extism_item = syn::Item::Use(syn::ItemUse {
+            attrs: Vec::new(),
+            vis: syn::Visibility::Inherited,
+            use_token: Token![use](Span::call_site()),
+            leading_colon: None,
+            tree: syn::UseTree::Path(syn::UsePath {
+                ident: syn::Ident::new("extism-pdk", Span::call_site()),
+                colon2_token: Token![::](Span::call_site()),
+                tree: Box::new(syn::UseTree::Glob(syn::UseGlob {
+                    star_token: Token![*](Span::call_site()),
+                })),
+            }),
+            semi_token: Token![;](Span::call_site()),
+        });
+        ast.items.insert(0, use_extism_item);
+
+        Self::tag_functions_for_export(&mut ast.items);
+
         let lib_rs_path = cargo_src_path.as_ref().join("lib.rs");
         let mut lib_rs_file = File::create(&lib_rs_path).map_err(|err| UntRustedError::IoError {
    resource: format!("{:?}", lib_rs_path),
@@ -130,9 +176,29 @@ impl UntrustedRustProject {
         return Ok(());
     }
 
-    fn cargo_build_to_wasm<P: AsRef<Path>>(cargo_dir: P) -> Result<PathBuf> {
+    fn tag_functions_for_export(items: &mut Vec<syn::Item>) {
+        let mut item_idx: usize = 0;
+        while item_idx < items.len() {
+
+            match &mut items[item_idx] {
+                syn::Item::Mod(item_mod) => if let Some(content) = &mut item_mod.content {
+                    Self::tag_functions_for_export(&mut content.1)
+                },
+                syn::Item::Fn(item_fn) => {
+                    if item_fn.vis == syn::Visibility::Public(Token![pub](Span::call_site())) {
+                        // export it
+                    }
+                },
+                _ => (),
+            }
+
+            item_idx += 1;
+        }
+    }
+
+    fn cargo_build_to_wasm<P: AsRef<Path>>(&self, cargo_dir: P) -> Result<PathBuf> {
         let cargo_output = Command::new("cargo")
-            .args(["build", "--target", "wasm32-unknown-unknown", "--release"])
+            .args(["build", "--target", self.target.as_str(), "--release"])
             .current_dir(&cargo_dir)
             .output().map_err(|err| UntRustedError::IoError {
    resource: "cargo build".into(),
@@ -146,8 +212,8 @@ impl UntrustedRustProject {
             let stdout_str = String::from_utf8_lossy(&cargo_output.stdout);
             let stderr_str = String::from_utf8_lossy(&cargo_output.stderr);
 
-            let need_target_err = "note: the `wasm32-unknown-unknown` target may not be installed";
-            if stdout_str.contains(need_target_err) || stderr_str.contains(need_target_err) {
+            let need_target_err = format!("note: the `{}` target may not be installed", self.target.as_str());
+            if stdout_str.contains(&need_target_err) || stderr_str.contains(&need_target_err) {
                 return Err(UntRustedError::MissingCargoTargetInstallation);
             }
 
@@ -176,25 +242,6 @@ impl CompiledUntrustedRustProject {
     }
 
 }
-/* Usage:
-
-let rust_code1 = """mod player1 {
-    pub fn entry(inputs: Inputs) -> Outputs {
-    }
-}
-""";
-
-let rust_code2 = """mod player2 {
-    pub fn entry(inputs: Inputs) -> Outputs {
-    }
-}
-""";
-
-let project = UntrustedRustProject::new(&format!("{}{}", rust_code1, rust_code2));
-
-let mut compiled_project = project.compile();
-let outputs = compiled_project.call("player1::entry", inputs);
- */
 
 #[cfg(test)]
 mod tests {
