@@ -5,6 +5,7 @@ use std::io::Write;
 use std::path::{Path, PathBuf};
 use std::process::Command;
 use std::time::Duration;
+use std::ops::Deref;
 
 use extism::{Manifest, Plugin, Wasm, ToBytes, FromBytes};
 use extism_manifest::MemoryOptions;
@@ -12,6 +13,8 @@ use extism_manifest::MemoryOptions;
 use tempfile::TempDir;
 
 use syn::Token;
+use syn::token::Paren;
+use syn::punctuated::Punctuated;
 use syn::__private::Span;
 
 use crate::error::*;
@@ -160,7 +163,7 @@ impl UntrustedRustProject {
         });
         ast.items.insert(0, use_extism_item);
 
-        Self::tag_functions_for_export(&mut ast.items);
+        Self::tag_functions_for_export(&mut ast.items, "")?;
 
         let lib_rs_path = cargo_src_path.as_ref().join("lib.rs");
         let mut lib_rs_file = File::create(&lib_rs_path).map_err(|err| UntRustedError::IoError {
@@ -176,17 +179,86 @@ impl UntrustedRustProject {
         return Ok(());
     }
 
-    fn tag_functions_for_export(items: &mut Vec<syn::Item>) {
+    fn tag_functions_for_export(items: &mut Vec<syn::Item>, mod_names: &str) -> Result<()> {
         let mut item_idx: usize = 0;
         while item_idx < items.len() {
 
             match &mut items[item_idx] {
                 syn::Item::Mod(item_mod) => if let Some(content) = &mut item_mod.content {
-                    Self::tag_functions_for_export(&mut content.1)
+                    let new_mod_names = if mod_names.is_empty() {
+                        item_mod.ident.to_string()
+                    } else {
+                        format!("{}__{}", mod_names, item_mod.ident.to_string())
+                    };
+
+                    Self::tag_functions_for_export(&mut content.1, &new_mod_names)?;
                 },
                 syn::Item::Fn(item_fn) => {
                     if item_fn.vis == syn::Visibility::Public(Token![pub](Span::call_site())) {
-                        // export it
+                        // export it by creating a clone of the function
+                        let new_fn_name = format!("{}__{}", mod_names, item_fn.sig.ident.to_string());
+
+                        let mut new_fn_sig = item_fn.sig.clone();
+                        new_fn_sig.ident = syn::Ident::new(&new_fn_name, Span::call_site());
+
+                        let mut call_old_fn_args = Punctuated::new();
+                        for param in &item_fn.sig.inputs {
+                            match param {
+                                syn::FnArg::Typed(pat_type) => {
+                                    let param_name: String = Self::get_param_name(pat_type)?;
+                                    let mut param_segments = Punctuated::new();
+                                    param_segments.push(syn::PathSegment {
+                                        ident: syn::Ident::new(&param_name, Span::call_site()),
+                                        arguments: syn::PathArguments::None,
+                                    });
+
+                                    call_old_fn_args.push(syn::Expr::Path(syn::ExprPath {
+                                        attrs: Vec::new(),
+                                        qself: None,
+                                        path: syn::Path {
+                                            leading_colon: None,
+                                            segments: param_segments,
+                                        },
+                                    }));
+                                },
+                                _ => return Err(UntRustedError::UnsupportedFnArg(format!("{:?}", param))),
+                            }
+                        }
+
+                        let mut old_fn_call_name_segments = Punctuated::new();
+                        old_fn_call_name_segments.push(syn::PathSegment {
+                            ident: item_fn.sig.ident.clone(),
+                            arguments: syn::PathArguments::None,
+                        });
+
+                        let old_fn_call = syn::Stmt::Expr(syn::Expr::Call(syn::ExprCall {
+                            attrs: Vec::new(),
+                            func: Box::new(syn::Expr::Path(syn::ExprPath {
+                                attrs: Vec::new(),
+                                qself: None,
+                                path: syn::Path {
+                                    leading_colon: None,
+                                    segments: old_fn_call_name_segments,
+                                }
+                            })),
+                            paren_token: Paren::default(),
+                            args: call_old_fn_args,
+                        }), None);
+
+                        let new_fn_block = syn::Block {
+                            brace_token: item_fn.block.brace_token.clone(),
+                            stmts: vec![old_fn_call],
+                        };
+
+                        let new_fn_item = syn::Item::Fn(syn::ItemFn {
+                            attrs: item_fn.attrs.clone(),
+                            vis: item_fn.vis.clone(),
+                            sig: new_fn_sig,
+                            block: Box::new(new_fn_block),
+                        });
+
+                        items.insert(item_idx + 1, new_fn_item);
+                        item_idx += 1;
                     }
                 },
                 _ => (),
@@ -194,6 +266,19 @@ impl UntrustedRustProject {
 
             item_idx += 1;
         }
+
+        return Ok(());
+    }
+
+    fn get_param_name(pat_type: &syn::PatType) -> Result<String> {
+        let name = match pat_type.pat.deref() {
+            syn::Pat::Ident(pat_ident) => {
+                pat_ident.ident.to_string()
+            },
+            _ => return Err(UntRustedError::UnsupportedParamName(format!("{:?}", pat_type))),
+        };
+
+        return Ok(name);
     }
 
     fn cargo_build_to_wasm<P: AsRef<Path>>(&self, cargo_dir: P) -> Result<PathBuf> {

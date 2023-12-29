@@ -16,6 +16,10 @@ pub enum UntRustedError {
     MissingCargoTargetInstallation,
     #[error("Hit unknown cargo build error.\nSTDOUT:\n{0}\nSTDERR:\n{1}")]
     UnknownCargoError(String, String),
+    #[error("This PatType is not supported: {0}")]
+    UnsupportedParamName(String),
+    #[error("This FnArg is not supported: {0}")]
+    UnsupportedFnArg(String),
 }
 
 impl From<extism::Error> for UntRustedError {
