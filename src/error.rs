@@ -9,7 +9,11 @@ pub enum UntRustedError {
         err: std::io::Error,
     },
     #[error("Extism error: {0}")]
-    Extism(extism::Error),   
+    Extism(extism::Error),
+    #[error("Missing target wasm32-unknown-unknown, can install using `rustup target add wasm32-unknown-unknown`")]
+    MissingCargoTargetInstallation,
+    #[error("Hit unknown cargo build error.\nSTDOUT:\n{0}\nSTDERR:\n{1}")]
+    UnknownCargoError(String, String),
 }
 
 impl From<extism::Error> for UntRustedError {

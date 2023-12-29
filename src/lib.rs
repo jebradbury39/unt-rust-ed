@@ -142,7 +142,20 @@ impl UntrustedRustProject {
         // parse cargo output, find target
         println!("cargo build output:\n{:?}", cargo_output);
 
-        return Ok(cargo_dir.as_ref().join("target/wasm32-unknown-unknown/release/test-wasm.wasm"));
+        if !cargo_output.status.success() {
+            let stdout_str = String::from_utf8_lossy(&cargo_output.stdout);
+            let stderr_str = String::from_utf8_lossy(&cargo_output.stderr);
+
+            let need_target_err = "note: the `wasm32-unknown-unknown` target may not be installed";
+            if stdout_str.contains(need_target_err) || stderr_str.contains(need_target_err) {
+                return Err(UntRustedError::MissingCargoTargetInstallation);
+            }
+
+            // unknown error
+            return Err(UntRustedError::UnknownCargoError(stdout_str.into(), stderr_str.into()));
+        }
+
+        return Ok(cargo_dir.as_ref().join("target/wasm32-unknown-unknown/release/test_wasm.wasm"));
     }
 }
 
@@ -195,8 +208,8 @@ mod tests {
 
         let mut compiled_project = project.compile().unwrap();
 
-        let outputs: i32 = compiled_project.call("add", 10).unwrap();
+        let outputs: i32 = compiled_project.call("add2", 10).unwrap();
 
-        println!("{:?}", outputs);
+        assert_eq!(12, outputs);
     }
 }
