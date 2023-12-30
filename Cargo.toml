@@ -1,15 +1,2 @@
-[package]
-name = "unt-rust-ed"
-version = "0.1.0"
-edition = "2021"
-
-# See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
-
-[dependencies]
-thiserror = "1.0.52"
-tempfile = "3.8.1"
-syn = { version = "2.0.43", features = [ "parsing", "full", "extra-traits" ] }
-prettyplease = "0.2.15"
-extism = "^1.0.0-rc3"
-extism-manifest = "^1.0.0-rc3"
-page_size = "0.6.0"
+[workspace]
+members = [ "unt_rust_ed", "unt_rust_ed_derive" ]
