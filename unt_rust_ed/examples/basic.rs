@@ -1,20 +1,21 @@
 
 use unt_rust_ed::UntrustedRustProject;
+use unt_rust_ed_derive::ExportedHostType;
 
-#[derive(serde::Serialize)]
+#[derive(ExportedHostType)]
 pub struct Inputs {
     pub a: i32,
     pub b: i32,
 }
 
-#[derive(Debug, serde::Deserialize)]
+#[derive(ExportedHostType, Debug)]
 pub struct Outputs {
     pub c: i32,
     pub d: String,
 }
 
 fn main() {
-    let rust_code = "pub fn process(a: Inputs) -> Outputs {
+    let rust_code = "pub fn process(a: i32) -> i32 {
         return a + 2;
     }";
 
@@ -27,7 +28,7 @@ fn main() {
         b: -3,
     };
 
-    let outputs: Outputs = compiled_project.call("process", &inputs).unwrap();
+    let outputs: i32 = compiled_project.call("process", 10).unwrap();
 
     println!("output: {:?}", outputs);
 }

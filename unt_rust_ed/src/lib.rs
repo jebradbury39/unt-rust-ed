@@ -66,7 +66,7 @@ impl UntrustedRustProject {
     /// Converts the modules into compiled modules containing WASM
     pub fn compile(&self) -> Result<CompiledUntrustedRustProject> {
         // create temp directory
-        let tmp_cargo_dir = TempDir::new_in(".").map_err(|err| UntRustedError::IoError {
+        let tmp_cargo_dir = TempDir::new().map_err(|err| UntRustedError::IoError {
    resource: "TempDir".into(),
    err,
    })?;

@@ -16,13 +16,13 @@ pub fn exported_host_type(initial_input: TokenStream) -> TokenStream {
 
     let name = input.ident;
 
-    // Add a bound `T: HeapSize` to every type parameter T.
+    // Add a bound `T: ExportedHostType` to every type parameter T.
     let generics = add_trait_bounds(input.generics);
     let (impl_generics, ty_generics, where_clause) = generics.split_for_impl();
 
     let expanded = quote! {
         // the generated impl
-        impl #impl_generics ExportedHostType for #name #ty_generics #where_clause {
+        impl #impl_generics unt_rust_ed::ExportedHostType for #name #ty_generics #where_clause {
             fn typedef_as_string(&self) -> &'static str {
                 #defstr
             }
@@ -37,7 +37,7 @@ pub fn exported_host_type(initial_input: TokenStream) -> TokenStream {
 fn add_trait_bounds(mut generics: Generics) -> Generics {
     for param in &mut generics.params {
         if let GenericParam::Type(ref mut type_param) = *param {
-            type_param.bounds.push(parse_quote!(ExportedHostType));
+            type_param.bounds.push(parse_quote!(unt_rust_ed::ExportedHostType));
         }
     }
     generics
