@@ -20,7 +20,7 @@ use syn::__private::Span;
 use crate::error::*;
 
 pub trait ExportedHostType {
-    fn typedef_as_string(&self) -> &'static str;
+    fn typedef_as_string() -> &'static str;
 }
 
 /// Returns the number of bytes in a page of memory.

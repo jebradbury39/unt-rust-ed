@@ -1,5 +1,5 @@
 
-use unt_rust_ed::UntrustedRustProject;
+use unt_rust_ed::{UntrustedRustProject, ExportedHostType};
 use unt_rust_ed_derive::ExportedHostType;
 
 #[derive(ExportedHostType)]
@@ -23,10 +23,7 @@ fn main() {
 
     let mut compiled_project = project.compile().unwrap();
 
-    let inputs = Inputs {
-        a: 12,
-        b: -3,
-    };
+    println!("inputs typdef: {}", Inputs::typedef_as_string());
 
     let outputs: i32 = compiled_project.call("process", 10).unwrap();
 

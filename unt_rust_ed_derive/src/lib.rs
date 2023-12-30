@@ -23,7 +23,7 @@ pub fn exported_host_type(initial_input: TokenStream) -> TokenStream {
     let expanded = quote! {
         // the generated impl
         impl #impl_generics unt_rust_ed::ExportedHostType for #name #ty_generics #where_clause {
-            fn typedef_as_string(&self) -> &'static str {
+            fn typedef_as_string() -> &'static str {
                 #defstr
             }
         }
