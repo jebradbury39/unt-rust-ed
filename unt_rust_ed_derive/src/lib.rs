@@ -1,11 +1,22 @@
-use proc_macro::TokenStream;
+use proc_macro2::TokenStream;
 
 use syn::{parse_macro_input, DeriveInput, parse_quote, GenericParam, Generics};
 
 use quote::quote;
 
+#[proc_macro_attribute]
+pub fn exported_host_type(_metadata: proc_macro::TokenStream, input: proc_macro::TokenStream)
+                 -> proc_macro::TokenStream {
+    let input: TokenStream = input.into();
+    let output = quote! {
+        #[derive(Debug, serde::Serialize, serde::Deserialize, unt_rust_ed_derive::ExportedHostType)]
+        #input
+    };
+    output.into()
+}
+
 #[proc_macro_derive(ExportedHostType)]
-pub fn exported_host_type(initial_input: TokenStream) -> TokenStream {
+pub fn exported_host_type_macro(initial_input: proc_macro::TokenStream) -> proc_macro::TokenStream {
     let defstr = initial_input.to_string();
 
     // parse input into an ast
@@ -27,10 +38,10 @@ pub fn exported_host_type(initial_input: TokenStream) -> TokenStream {
     };
 
     // hand outpput back to compiler
-    TokenStream::from(expanded)    
+    proc_macro::TokenStream::from(expanded)    
 }
 
-// Add a bound `T: HeapSize` to every type parameter T.
+// Add a bound `T: ExportedHostType` to every type parameter T.
 fn add_trait_bounds(mut generics: Generics) -> Generics {
     for param in &mut generics.params {
         if let GenericParam::Type(ref mut type_param) = *param {

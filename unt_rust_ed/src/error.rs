@@ -12,8 +12,8 @@ pub enum UntRustedError {
     Extism(extism::Error),
     #[error("Syn error: {0}")]
     Syn(syn::Error),
-    #[error("Missing target wasm32-unknown-unknown, can install using `rustup target add wasm32-unknown-unknown`")]
-    MissingCargoTargetInstallation,
+    #[error("Missing target {0}, can install using `rustup target add {0}`")]
+    MissingCargoTargetInstallation(String),
     #[error("Hit unknown cargo build error.\nSTDOUT:\n{0}\nSTDERR:\n{1}")]
     UnknownCargoError(String, String),
     #[error("This PatType is not supported: {0}")]

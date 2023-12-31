@@ -1,14 +1,14 @@
 
 use unt_rust_ed::{UntrustedRustProject, ExportedHostType};
-use unt_rust_ed_derive::ExportedHostType;
+use unt_rust_ed_derive::exported_host_type;
 
-#[derive(ExportedHostType)]
+#[exported_host_type]
 pub struct Inputs {
     pub a: i32,
     pub b: i32,
 }
 
-#[derive(ExportedHostType, Debug)]
+#[exported_host_type]
 pub struct Outputs {
     pub c: i32,
     pub d: String,
@@ -22,6 +22,7 @@ fn main() {
     let mut project = UntrustedRustProject::new(rust_code);
 
     project.add_exported_host_type::<Inputs>();
+    project.add_exported_host_type::<Outputs>();
 
     let mut compiled_project = project.compile().unwrap();
 

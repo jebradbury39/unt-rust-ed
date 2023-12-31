@@ -15,3 +15,4 @@ extism = "^1.0.0-rc3"
 extism-manifest = "^1.0.0-rc3"
 page_size = "0.6.0"
 unt-rust-ed-derive = { path="../unt_rust_ed_derive" }
+serde = "1.0.193"

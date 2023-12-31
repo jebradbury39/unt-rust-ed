@@ -147,7 +147,8 @@ impl UntrustedRustProject {
     crate-type = [\"cdylib\"]
 
     [dependencies]
-    extism-pdk = \"1.0.0-rc1\"";
+    extism-pdk = \"1.0.0-rc1\"
+    serde = \"1.0.193\"";
 
         cargo_toml_file.write_all(content.as_bytes()).map_err(|err| UntRustedError::IoError {
    resource: format!("{:?}", cargo_toml_path.as_ref()),
@@ -159,7 +160,16 @@ impl UntrustedRustProject {
 
     fn write_rust_code_to_cargo_dir<P: AsRef<Path>>(&self, cargo_src_path: P) -> Result<()> {
 
-        let mut ast: syn::File = syn::parse_file(&self.rust_code)?;
+        let mut rust_code = self.rust_code.clone();
+
+        // add exported type defs
+        for (_, typedef) in &self.exported_host_types {
+            rust_code.push('\n');
+            rust_code.push_str("#[derive(Debug, serde::Serialize, serde::Deserialize)]\n");
+            rust_code.push_str(typedef);
+        }
+
+        let mut ast: syn::File = syn::parse_file(&rust_code)?;
 
         println!("{:?}", ast);
 
@@ -395,7 +405,7 @@ impl UntrustedRustProject {
 
             let need_target_err = format!("note: the `{}` target may not be installed", self.target.as_str());
             if stdout_str.contains(&need_target_err) || stderr_str.contains(&need_target_err) {
-                return Err(UntRustedError::MissingCargoTargetInstallation);
+                return Err(UntRustedError::MissingCargoTargetInstallation(self.target.as_str().into()));
             }
 
             // unknown error
