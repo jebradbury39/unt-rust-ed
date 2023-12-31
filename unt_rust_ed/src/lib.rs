@@ -192,7 +192,16 @@ impl UntrustedRustProject {
         });
         ast.items.insert(0, use_extism_item);
 
-        Self::tag_functions_for_export(&mut ast.items, "")?;
+        let mut jsonify_typenames = HashSet::new();
+        for (typename, _) in &self.exported_host_types {
+            jsonify_typenames.insert(typename.clone());
+        }
+
+        for typename in &self.sdk_types {
+            jsonify_typenames.insert(typename.clone());
+        }
+
+        Self::tag_functions_for_export(&mut ast.items, "", &jsonify_typenames)?;
 
         let new_rust_code = prettyplease::unparse(&ast);
 
@@ -212,7 +221,7 @@ impl UntrustedRustProject {
         return Ok(());
     }
 
-    fn tag_functions_for_export(items: &mut Vec<syn::Item>, mod_names: &str) -> Result<()> {
+    fn tag_functions_for_export(items: &mut Vec<syn::Item>, mod_names: &str, jsonify_typenames: &HashSet<String>) -> Result<()> {
         let mut item_idx: usize = 0;
         while item_idx < items.len() {
 
@@ -229,143 +238,134 @@ impl UntrustedRustProject {
                         format!("{}__{}", mod_names, item_mod_name)
                     };
 
-                    Self::tag_functions_for_export(&mut content.1, &new_mod_names)?;
+                    Self::tag_functions_for_export(&mut content.1, &new_mod_names, jsonify_typenames)?;
                 },
                 syn::Item::Fn(item_fn) => {
-                    if item_fn.vis == syn::Visibility::Public(Token![pub](Span::call_site())) {
-                        // export it by creating a clone of the function
-                        let new_fn_name = format!("{}__{}", mod_names, item_fn.sig.ident.to_string());
+                    if item_fn.vis != syn::Visibility::Public(Token![pub](Span::call_site())) {
+                        continue;
+                    }
 
-                        let mut new_fn_sig = item_fn.sig.clone();
-                        new_fn_sig.ident = syn::Ident::new(&new_fn_name, Span::call_site());
-                        new_fn_sig.output = syn::ReturnType::Type(Token![->](Span::call_site()), Box::new(syn::Type::Path(syn::TypePath {
+                    // export it by creating a clone of the function
+                    let new_fn_name = format!("{}__{}", mod_names, item_fn.sig.ident.to_string());
+
+                    let mut new_fn_sig = item_fn.sig.clone();
+                    new_fn_sig.ident = syn::Ident::new(&new_fn_name, Span::call_site());
+                    match &item_fn.sig.output {
+                        syn::ReturnType::Type(_, ty) => {
+                            let new_ret_ty = if Self::can_jsonify_type(jsonify_typenames, ty) {
+                                let new_ret_ty = Self::wrap_type("Json", &[ty]);
+                                Self::wrap_type("FnResult", &[&new_ret_ty])
+                            } else {
+                                Self::wrap_type("FnResult", &[ty])
+                            };
+
+                            new_fn_sig.output = syn::ReturnType::Type(Token![->](Span::call_site()), Box::new(new_ret_ty));
+                        },
+                        _ => (),
+                    }
+
+                    let mut call_old_fn_args = Punctuated::new();
+                    for param in &item_fn.sig.inputs {
+                        match param {
+                            syn::FnArg::Typed(pat_type) => {
+                                let param_name: String = Self::get_param_name(pat_type)?;
+
+                                call_old_fn_args.push(syn::Expr::Path(syn::ExprPath {
+                                    attrs: Vec::new(),
+                                    qself: None,
+                                    path: syn::Path {
+                                        leading_colon: None,
+                                        segments: {
+                                            let mut segments = Punctuated::new();
+                                            segments.push(syn::PathSegment {
+                                                ident: syn::Ident::new(&param_name, Span::call_site()),
+                                                arguments: syn::PathArguments::None,
+                                            });
+                                            segments
+                                        },
+                                    },
+                                }));
+                            },
+                            _ => return Err(UntRustedError::UnsupportedFnArg(format!("{:?}", param))),
+                        }
+                    }
+
+                    let mut old_fn_call_name_segments = Punctuated::new();
+                    old_fn_call_name_segments.push(syn::PathSegment {
+                        ident: item_fn.sig.ident.clone(),
+                        arguments: syn::PathArguments::None,
+                    });
+
+                    let old_fn_call = syn::Expr::Call(syn::ExprCall {
+                        attrs: Vec::new(),
+                        func: Box::new(syn::Expr::Path(syn::ExprPath {
+                            attrs: Vec::new(),
+                            qself: None,
+                            path: syn::Path {
+                                leading_colon: None,
+                                segments: old_fn_call_name_segments,
+                            }
+                        })),
+                        paren_token: Paren::default(),
+                        args: call_old_fn_args,
+                    });
+
+                    let ok_wrapper_call = syn::Stmt::Expr(syn::Expr::Call(syn::ExprCall {
+                        attrs: Vec::new(),
+                        func: Box::new(syn::Expr::Path(syn::ExprPath {
+                            attrs: Vec::new(),
                             qself: None,
                             path: syn::Path {
                                 leading_colon: None,
                                 segments: {
                                     let mut segments = Punctuated::new();
                                     segments.push(syn::PathSegment {
-                                        ident: syn::Ident::new("FnResult", Span::call_site()),
-                                        arguments: syn::PathArguments::AngleBracketed(syn::AngleBracketedGenericArguments {
-                                            colon2_token: None,
-                                            lt_token: Token![<](Span::call_site()),
-                                            args: {
-                                                let mut args = Punctuated::new();
-                                                args.push(syn::GenericArgument::Type(match &item_fn.sig.output {
-    syn::ReturnType::Default => panic!("not allowed"),
-    syn::ReturnType::Type(_, ty) => ty.deref().clone(),
-}));
-                                                args
-                                            },
-                                            gt_token: Token![>](Span::call_site()),
-                                        })
-                                    });
-                                    segments
-                                }
-                            }
-                        })));
-
-                        let mut call_old_fn_args = Punctuated::new();
-                        for param in &item_fn.sig.inputs {
-                            match param {
-                                syn::FnArg::Typed(pat_type) => {
-                                    let param_name: String = Self::get_param_name(pat_type)?;
-                                    let mut param_segments = Punctuated::new();
-                                    param_segments.push(syn::PathSegment {
-                                        ident: syn::Ident::new(&param_name, Span::call_site()),
+                                        ident: syn::Ident::new("Ok", Span::call_site()),
                                         arguments: syn::PathArguments::None,
                                     });
-
-                                    call_old_fn_args.push(syn::Expr::Path(syn::ExprPath {
-                                        attrs: Vec::new(),
-                                        qself: None,
-                                        path: syn::Path {
-                                            leading_colon: None,
-                                            segments: param_segments,
-                                        },
-                                    }));
+                                    segments
                                 },
-                                _ => return Err(UntRustedError::UnsupportedFnArg(format!("{:?}", param))),
                             }
+                        })),
+                        paren_token: Paren::default(),
+                        args: {
+                            let mut args = Punctuated::new();
+                            args.push(old_fn_call);
+                            args
                         }
+                    }), None);
 
-                        let mut old_fn_call_name_segments = Punctuated::new();
-                        old_fn_call_name_segments.push(syn::PathSegment {
-                            ident: item_fn.sig.ident.clone(),
-                            arguments: syn::PathArguments::None,
-                        });
+                    let new_fn_block = syn::Block {
+                        brace_token: item_fn.block.brace_token.clone(),
+                        stmts: vec![ok_wrapper_call],
+                    };
 
-                        let old_fn_call = syn::Expr::Call(syn::ExprCall {
-                            attrs: Vec::new(),
-                            func: Box::new(syn::Expr::Path(syn::ExprPath {
-                                attrs: Vec::new(),
-                                qself: None,
-                                path: syn::Path {
-                                    leading_colon: None,
-                                    segments: old_fn_call_name_segments,
-                                }
-                            })),
-                            paren_token: Paren::default(),
-                            args: call_old_fn_args,
-                        });
+                    let mut new_fn_attrs_segments = Punctuated::new();
+                    new_fn_attrs_segments.push(syn::PathSegment {
+                        ident: syn::Ident::new("plugin_fn", Span::call_site()),
+                        arguments: syn::PathArguments::None,
+                    });
 
-                        let ok_wrapper_call = syn::Stmt::Expr(syn::Expr::Call(syn::ExprCall {
-                            attrs: Vec::new(),
-                            func: Box::new(syn::Expr::Path(syn::ExprPath {
-                                attrs: Vec::new(),
-                                qself: None,
-                                path: syn::Path {
-                                    leading_colon: None,
-                                    segments: {
-                                        let mut segments = Punctuated::new();
-                                        segments.push(syn::PathSegment {
-                                            ident: syn::Ident::new("Ok", Span::call_site()),
-                                            arguments: syn::PathArguments::None,
-                                        });
-                                        segments
-                                    },
-                                }
-                            })),
-                            paren_token: Paren::default(),
-                            args: {
-                                let mut args = Punctuated::new();
-                                args.push(old_fn_call);
-                                args
-                            }
-                        }), None);
+                    let mut new_fn_attrs = item_fn.attrs.clone();
+                    new_fn_attrs.push(syn::Attribute {
+                        pound_token: Token![#](Span::call_site()),
+                        style: syn::AttrStyle::Outer,
+                        bracket_token: Bracket::default(),
+                        meta: syn::Meta::Path(syn::Path {
+                            leading_colon: None,
+                            segments: new_fn_attrs_segments,
+                        }),
+                    });
 
-                        let new_fn_block = syn::Block {
-                            brace_token: item_fn.block.brace_token.clone(),
-                            stmts: vec![ok_wrapper_call],
-                        };
+                    let new_fn_item = syn::Item::Fn(syn::ItemFn {
+                        attrs: new_fn_attrs,
+                        vis: item_fn.vis.clone(),
+                        sig: new_fn_sig,
+                        block: Box::new(new_fn_block),
+                    });
 
-                        let mut new_fn_attrs_segments = Punctuated::new();
-                        new_fn_attrs_segments.push(syn::PathSegment {
-                            ident: syn::Ident::new("plugin_fn", Span::call_site()),
-                            arguments: syn::PathArguments::None,
-                        });
-
-                        let mut new_fn_attrs = item_fn.attrs.clone();
-                        new_fn_attrs.push(syn::Attribute {
-                            pound_token: Token![#](Span::call_site()),
-                            style: syn::AttrStyle::Outer,
-                            bracket_token: Bracket::default(),
-                            meta: syn::Meta::Path(syn::Path {
-                                leading_colon: None,
-                                segments: new_fn_attrs_segments,
-                            }),
-                        });
-
-                        let new_fn_item = syn::Item::Fn(syn::ItemFn {
-                            attrs: new_fn_attrs,
-                            vis: item_fn.vis.clone(),
-                            sig: new_fn_sig,
-                            block: Box::new(new_fn_block),
-                        });
-
-                        items.insert(item_idx + 1, new_fn_item);
-                        item_idx += 1;
-                    }
+                    items.insert(item_idx + 1, new_fn_item);
+                    item_idx += 1;
                 },
                 _ => (),
             }
@@ -374,6 +374,45 @@ impl UntrustedRustProject {
         }
 
         return Ok(());
+    }
+
+    fn can_jsonify_type(jsonify_typenames: &HashSet<String>, ty: &syn::Type) -> bool {
+        match ty {
+            syn::Type::Path(syn::TypePath { path, .. }) => {
+                let path_as_str = path.to_token_stream().to_string();
+
+                jsonify_typenames.contains(&path_as_str)
+            }
+            _ => false,
+        }
+    }
+
+    fn wrap_type(outer_type: &str, inner_types: &[&syn::Type]) -> syn::Type {
+        syn::Type::Path(syn::TypePath {
+            qself: None,
+            path: syn::Path {
+                leading_colon: None,
+                segments: {
+                    let mut segments = Punctuated::new();
+                    segments.push(syn::PathSegment {
+                        ident: syn::Ident::new(outer_type, Span::call_site()),
+                        arguments: syn::PathArguments::AngleBracketed(syn::AngleBracketedGenericArguments {
+                            colon2_token: None,
+                            lt_token: Token![<](Span::call_site()),
+                            args: {
+                                let mut args = Punctuated::new();
+                                for inner_type in inner_types {
+                                    args.push(syn::GenericArgument::Type((*inner_type).clone()));
+                                }
+                                args
+                            },
+                            gt_token: Token![>](Span::call_site()),
+                        })
+                    });
+                    segments
+                }
+            }
+        })
     }
 
     fn get_param_name(pat_type: &syn::PatType) -> Result<String> {

@@ -26,8 +26,6 @@ fn main() {
 
     let mut compiled_project = project.compile().unwrap();
 
-    println!("inputs typdef: {}", Inputs::typedef_as_string());
-
     let outputs: i32 = compiled_project.call("process", 10).unwrap();
 
     println!("output: {:?}", outputs);
