@@ -6,6 +6,7 @@ use std::path::{Path, PathBuf};
 use std::process::Command;
 use std::time::Duration;
 use std::ops::Deref;
+use std::collections::{HashSet, HashMap};
 
 use extism::{Manifest, Plugin, Wasm, ToBytes, FromBytes};
 use extism_manifest::MemoryOptions;
@@ -50,6 +51,10 @@ pub struct UntrustedRustProject {
     runtime_memory_options: MemoryOptions,
     runtime_timeout_ms: Option<u64>,
     target: WasmCompileTarget,
+    /// map type name to typedef
+    exported_host_types: HashMap<String, String>,
+    /// type names to replace during compilation. May contain module separators ('::')
+    sdk_types: HashSet<String>,
 }
 
 impl UntrustedRustProject {
@@ -59,8 +64,18 @@ impl UntrustedRustProject {
             rust_code: rust_code.into(),
             runtime_memory_options: MemoryOptions::default(),
             runtime_timeout_ms: None,
-            target: WasmCompileTarget::default(),           
+            target: WasmCompileTarget::default(),
+            exported_host_types: HashMap::new(),
+            sdk_types: HashSet::new(),          
         }
+    }
+
+    pub fn add_exported_host_type<T: ExportedHostType>(&mut self) {
+        self.exported_host_types.insert(std::any::type_name::<T>().to_string(), T::typedef_as_string().to_string());
+    }
+
+    pub fn add_sdk_type(&mut self, typename: &str) {
+        self.sdk_types.insert(typename.to_string());
     }
 
     /// Converts the modules into compiled modules containing WASM

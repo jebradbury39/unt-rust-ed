@@ -1,9 +1,6 @@
 use proc_macro::TokenStream;
 
-use syn::{parse_macro_input, DeriveInput, parse_quote, Data, Fields, GenericParam, Generics, Index, Token};
-use syn::token::{Paren, Bracket};
-use syn::punctuated::Punctuated;
-use syn::__private::Span;
+use syn::{parse_macro_input, DeriveInput, parse_quote, GenericParam, Generics};
 
 use quote::quote;
 

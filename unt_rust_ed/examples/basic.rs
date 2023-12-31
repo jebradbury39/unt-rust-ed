@@ -19,7 +19,9 @@ fn main() {
         return a + 2;
     }";
 
-    let project = UntrustedRustProject::new(rust_code);
+    let mut project = UntrustedRustProject::new(rust_code);
+
+    project.add_exported_host_type::<Inputs>();
 
     let mut compiled_project = project.compile().unwrap();
 
