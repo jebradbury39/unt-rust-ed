@@ -74,6 +74,24 @@ impl UntrustedRustProject {
         }
     }
 
+    pub fn with_max_memory_bytes(mut self, num_bytes: usize) -> Self {
+        let page_size = get_page_size();
+        let num_pages = if num_bytes % page_size == 0 {
+            num_bytes / page_size
+        } else {
+            num_bytes / page_size + 1
+        };
+        self.runtime_memory_options = MemoryOptions {
+            max_pages: Some(num_pages as u32),
+        };
+        self
+    }
+
+    pub fn with_target(mut self, target: WasmCompileTarget) -> Self {
+        self.target = target;
+        self
+    }
+
     /// These are "plain-old-data" types, and they exist mainly as a convenience. For more flexibility, use an sdk crate and tag the types as sdk types
     pub fn with_exported_host_type<T: ExportedHostType>(mut self) -> Self {
         self.exported_host_types.insert(T::typename().to_string(), T::typedef_as_string().to_string());
@@ -141,7 +159,7 @@ impl UntrustedRustProject {
             manifest
         };
 
-        let plugin = Plugin::new(&manifest, [], true)?;
+        let plugin = Plugin::new(&manifest, [], self.target == WasmCompileTarget::Wasi)?;
 
         return Ok(CompiledUntrustedRustProject {
             plugin,
@@ -488,7 +506,7 @@ impl UntrustedRustProject {
             return Err(UntRustedError::UnknownCargoError(stdout_str.into(), stderr_str.into()));
         }
 
-        return Ok(cargo_dir.as_ref().join("target/wasm32-unknown-unknown/release/test_wasm.wasm"));
+        return Ok(cargo_dir.as_ref().join("target").join(self.target.as_str()).join("release/test_wasm.wasm"));
     }
 }
 
