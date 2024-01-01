@@ -528,7 +528,14 @@ impl CompiledUntrustedRustProject {
             format!("__{}", fn_name.as_ref())
         };
 
-        return Ok(self.plugin.call(&exported_fn_name, input)?);
+        return match self.plugin.call(&exported_fn_name, input) {
+            Ok(val) => Ok(val),
+            Err(extism_err) => Err(match extism_err.to_string().as_str() {
+                "oom" => UntRustedError::RuntimeExceededMemory(fn_name.as_ref().to_string()),
+                "timeout" => UntRustedError::RuntimeExceededTimeout(fn_name.as_ref().to_string()),
+                _ => UntRustedError::Extism(extism_err),
+            })
+        };
     }
 
 }

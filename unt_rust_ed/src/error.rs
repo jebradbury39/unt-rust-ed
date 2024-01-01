@@ -20,6 +20,10 @@ pub enum UntRustedError {
     UnsupportedParamName(String),
     #[error("This FnArg is not supported: {0}")]
     UnsupportedFnArg(String),
+    #[error("This external function call ({0}) took too long to execute")]
+    RuntimeExceededTimeout(String),
+    #[error("This external function call ({0}) attempted to allocate too much memory")]
+    RuntimeExceededMemory(String),
 }
 
 impl From<extism::Error> for UntRustedError {
