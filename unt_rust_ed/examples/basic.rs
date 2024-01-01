@@ -19,10 +19,9 @@ fn main() {
         return Outputs { c: a.a + a.b, d: String::from(\"done\") };
     }";
 
-    let mut project = UntrustedRustProject::new(rust_code);
-
-    project.add_exported_host_type::<Inputs>();
-    project.add_exported_host_type::<Outputs>();
+    let project = UntrustedRustProject::new(rust_code)
+        .with_exported_host_type::<Inputs>()
+        .with_exported_host_type::<Outputs>();
 
     let mut compiled_project = project.compile().unwrap();
 

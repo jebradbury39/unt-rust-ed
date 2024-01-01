@@ -9,7 +9,7 @@ use std::ops::Deref;
 use std::collections::{HashSet, HashMap};
 
 use extism::{Manifest, Plugin, Wasm, ToBytes, FromBytes};
-use extism_manifest::MemoryOptions;
+pub use extism_manifest::MemoryOptions;
 pub use extism_convert::Json;
 
 use tempfile::TempDir;
@@ -49,6 +49,7 @@ impl WasmCompileTarget {
     }
 }
 
+#[derive(Debug, Clone)]
 pub struct UntrustedRustProject {
     rust_code: String,
     runtime_memory_options: MemoryOptions,
@@ -73,12 +74,26 @@ impl UntrustedRustProject {
         }
     }
 
-    pub fn add_exported_host_type<T: ExportedHostType>(&mut self) {
+    /// These are "plain-old-data" types, and they exist mainly as a convenience. For more flexibility, use an sdk crate and tag the types as sdk types
+    pub fn with_exported_host_type<T: ExportedHostType>(mut self) -> Self {
         self.exported_host_types.insert(T::typename().to_string(), T::typedef_as_string().to_string());
+        self
     }
 
-    pub fn add_sdk_type(&mut self, typename: &str) {
+    /// These types are imported by the `rust_code`, and we need to know to 'jsonify' them
+    pub fn with_sdk_type(mut self, typename: &str) -> Self {
         self.sdk_types.insert(typename.to_string());
+        self
+    }
+
+    pub fn with_runtime_timeout_ms(mut self, ms: u64) -> Self {
+        self.runtime_timeout_ms = Some(ms);
+        self
+    }
+
+    pub fn with_runtime_memory_options(mut self, mem_opts: MemoryOptions) -> Self {
+        self.runtime_memory_options = mem_opts;
+        self
     }
 
     /// Converts the modules into compiled modules containing WASM
@@ -490,7 +505,7 @@ impl CompiledUntrustedRustProject {
         input: T,
     ) -> Result<U> {
         let exported_fn_name = if fn_name.as_ref().contains("::") {
-            fn_name.as_ref().replace("::", "_")
+            fn_name.as_ref().replace("::", "__")
         } else {
             format!("__{}", fn_name.as_ref())
         };
