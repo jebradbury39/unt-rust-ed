@@ -546,7 +546,7 @@ mod tests {
 
     #[test]
     fn test_basic() {
-        let rust_code = "use extism_pdk::*;\n#[plugin_fn]\npub fn add2(a: i32) -> FnResult<i32> {\nreturn Ok(a + 2);\n}";
+        let rust_code = "pub fn add2(a: i32) -> i32 {\nreturn a + 2;\n}";
 
         let project = UntrustedRustProject::new(rust_code);
 
