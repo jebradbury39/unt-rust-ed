@@ -172,8 +172,6 @@ impl UntrustedRustProject {
 
         let mut ast: syn::File = syn::parse_file(&rust_code)?;
 
-        println!("{:?}", ast);
-
         // add validator
 
         // update the ast
@@ -205,8 +203,6 @@ impl UntrustedRustProject {
         Self::tag_functions_for_export(&mut ast.items, "", &jsonify_typenames)?;
 
         let new_rust_code = prettyplease::unparse(&ast);
-
-        println!("new_rust:\n{}", new_rust_code);
 
         let lib_rs_path = cargo_src_path.as_ref().join("lib.rs");
         let mut lib_rs_file = File::create(&lib_rs_path).map_err(|err| UntRustedError::IoError {
@@ -257,7 +253,6 @@ impl UntrustedRustProject {
                         match param {
                             syn::FnArg::Typed(pat_type) => {
                                 if Self::can_jsonify_type(jsonify_typenames, &pat_type.ty) {
-                                    let param_name: String = Self::get_param_name(pat_type)?;
                                     pat_type.pat = Box::new(syn::Pat::TupleStruct(syn::PatTupleStruct {
                                         attrs: Vec::new(),
                                         qself: None,
@@ -373,8 +368,6 @@ impl UntrustedRustProject {
             syn::Type::Path(syn::TypePath { path, .. }) => {
                 let path_as_str = path.to_token_stream().to_string();
 
-                println!("jsonify?: {}, options: {:?}", path_as_str, jsonify_typenames);
-
                 jsonify_typenames.contains(&path_as_str)
             }
             _ => false,
@@ -465,7 +458,7 @@ impl UntrustedRustProject {
    })?;
 
         // parse cargo output, find target
-        println!("cargo build output:\n{:?}", cargo_output);
+        //println!("cargo build output:\n{:?}", cargo_output);
 
         if !cargo_output.status.success() {
             let stdout_str = String::from_utf8_lossy(&cargo_output.stdout);
