@@ -1,5 +1,5 @@
 
-use unt_rust_ed::{UntrustedRustProject, ExportedHostType};
+use unt_rust_ed::{UntrustedRustProject, Json};
 use unt_rust_ed_derive::exported_host_type;
 
 #[exported_host_type]
@@ -15,8 +15,8 @@ pub struct Outputs {
 }
 
 fn main() {
-    let rust_code = "pub fn process(a: i32) -> i32 {
-        return a + 2;
+    let rust_code = "pub fn process(a: Inputs) -> Outputs {
+        return Outputs { c: a.a + a.b, d: String::from(\"done\") };
     }";
 
     let mut project = UntrustedRustProject::new(rust_code);
@@ -26,7 +26,12 @@ fn main() {
 
     let mut compiled_project = project.compile().unwrap();
 
-    let outputs: i32 = compiled_project.call("process", 10).unwrap();
+    let inputs = Inputs {
+        a: 10,
+        b: -3,
+    };
+
+    let outputs: Json<Outputs> = compiled_project.call("process", Json(inputs)).unwrap();
 
     println!("output: {:?}", outputs);
 }

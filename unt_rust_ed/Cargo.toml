@@ -11,8 +11,9 @@ tempfile = "3.8.1"
 syn = { version = "2.0.43", features = [ "printing", "parsing", "full", "extra-traits" ] }
 quote = "1.0.33"
 prettyplease = "0.2.15"
-extism = "^1.0.0-rc3"
-extism-manifest = "^1.0.0-rc3"
+extism = "^1.0.0-rc7"
+extism-manifest = "^1.0.0-rc7"
+extism-convert = "1.0.0-rc7"
 page_size = "0.6.0"
 unt-rust-ed-derive = { path="../unt_rust_ed_derive" }
-serde = "1.0.193"
+serde = { version = "1.0", features = ["derive"] }

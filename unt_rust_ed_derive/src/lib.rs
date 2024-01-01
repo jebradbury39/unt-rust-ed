@@ -24,6 +24,8 @@ pub fn exported_host_type_macro(initial_input: proc_macro::TokenStream) -> proc_
 
     let name = input.ident;
 
+    let name_str = format!("{}", name);
+
     // Add a bound `T: ExportedHostType` to every type parameter T.
     let generics = add_trait_bounds(input.generics);
     let (impl_generics, ty_generics, where_clause) = generics.split_for_impl();
@@ -31,6 +33,10 @@ pub fn exported_host_type_macro(initial_input: proc_macro::TokenStream) -> proc_
     let expanded = quote! {
         // the generated impl
         impl #impl_generics unt_rust_ed::ExportedHostType for #name #ty_generics #where_clause {
+            fn typename() -> &'static str {
+                #name_str
+            }
+
             fn typedef_as_string() -> &'static str {
                 #defstr
             }

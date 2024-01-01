@@ -10,6 +10,7 @@ use std::collections::{HashSet, HashMap};
 
 use extism::{Manifest, Plugin, Wasm, ToBytes, FromBytes};
 use extism_manifest::MemoryOptions;
+pub use extism_convert::Json;
 
 use tempfile::TempDir;
 
@@ -17,10 +18,12 @@ use syn::Token;
 use syn::token::{Paren, Bracket};
 use syn::punctuated::Punctuated;
 use syn::__private::Span;
+use syn::__private::ToTokens;
 
 use crate::error::*;
 
 pub trait ExportedHostType {
+    fn typename() -> &'static str;
     fn typedef_as_string() -> &'static str;
 }
 
@@ -71,7 +74,7 @@ impl UntrustedRustProject {
     }
 
     pub fn add_exported_host_type<T: ExportedHostType>(&mut self) {
-        self.exported_host_types.insert(std::any::type_name::<T>().to_string(), T::typedef_as_string().to_string());
+        self.exported_host_types.insert(T::typename().to_string(), T::typedef_as_string().to_string());
     }
 
     pub fn add_sdk_type(&mut self, typename: &str) {
@@ -87,8 +90,6 @@ impl UntrustedRustProject {
    })?;
 
         // setup cargo project by creating Cargo.toml in temp directory
-        // extism-pdk = "0.3.4"
-        // extism-pdk-derive = "0.3.1"
         let cargo_toml_path = tmp_cargo_dir.path().join("Cargo.toml");
 
         Self::write_cargo_toml(cargo_toml_path)?;
@@ -148,7 +149,7 @@ impl UntrustedRustProject {
 
     [dependencies]
     extism-pdk = \"1.0.0-rc1\"
-    serde = \"1.0.193\"";
+    serde = { version = \"1.0\", features = [\"derive\"] }";
 
         cargo_toml_file.write_all(content.as_bytes()).map_err(|err| UntRustedError::IoError {
    resource: format!("{:?}", cargo_toml_path.as_ref()),
@@ -250,9 +251,37 @@ impl UntrustedRustProject {
 
                     let mut new_fn_sig = item_fn.sig.clone();
                     new_fn_sig.ident = syn::Ident::new(&new_fn_name, Span::call_site());
-                    match &item_fn.sig.output {
+
+                    // jsonify the input params of the new function
+                    for param in &mut new_fn_sig.inputs {
+                        match param {
+                            syn::FnArg::Typed(pat_type) => {
+                                if Self::can_jsonify_type(jsonify_typenames, &pat_type.ty) {
+                                    let param_name: String = Self::get_param_name(pat_type)?;
+                                    pat_type.pat = Box::new(syn::Pat::TupleStruct(syn::PatTupleStruct {
+                                        attrs: Vec::new(),
+                                        qself: None,
+                                        path: Self::create_simple_path(&["Json"]),
+                                        paren_token: Paren::default(),
+                                        elems: {
+                                            let mut elems = Punctuated::new();
+                                            elems.push((*pat_type.pat).clone());
+                                            elems
+                                        }
+                                    }));
+
+                                    pat_type.ty = Box::new(Self::wrap_type("Json", &[&pat_type.ty]));
+                                }
+                            },
+                            _ => continue,
+                        }
+                    }
+
+                    // jsonify the return type of the new function
+                    let can_jsonify_ret_ty = match &item_fn.sig.output {
                         syn::ReturnType::Type(_, ty) => {
-                            let new_ret_ty = if Self::can_jsonify_type(jsonify_typenames, ty) {
+                            let can_jsonify_ret_ty = Self::can_jsonify_type(jsonify_typenames, ty);
+                            let new_ret_ty = if can_jsonify_ret_ty {
                                 let new_ret_ty = Self::wrap_type("Json", &[ty]);
                                 Self::wrap_type("FnResult", &[&new_ret_ty])
                             } else {
@@ -260,9 +289,10 @@ impl UntrustedRustProject {
                             };
 
                             new_fn_sig.output = syn::ReturnType::Type(Token![->](Span::call_site()), Box::new(new_ret_ty));
+                            can_jsonify_ret_ty
                         },
-                        _ => (),
-                    }
+                        _ => false,
+                    };
 
                     let mut call_old_fn_args = Punctuated::new();
                     for param in &item_fn.sig.inputs {
@@ -273,44 +303,14 @@ impl UntrustedRustProject {
                                 call_old_fn_args.push(syn::Expr::Path(syn::ExprPath {
                                     attrs: Vec::new(),
                                     qself: None,
-                                    path: syn::Path {
-                                        leading_colon: None,
-                                        segments: {
-                                            let mut segments = Punctuated::new();
-                                            segments.push(syn::PathSegment {
-                                                ident: syn::Ident::new(&param_name, Span::call_site()),
-                                                arguments: syn::PathArguments::None,
-                                            });
-                                            segments
-                                        },
-                                    },
+                                    path: Self::create_simple_path(&[&param_name]),
                                 }));
                             },
                             _ => return Err(UntRustedError::UnsupportedFnArg(format!("{:?}", param))),
                         }
                     }
 
-                    let mut old_fn_call_name_segments = Punctuated::new();
-                    old_fn_call_name_segments.push(syn::PathSegment {
-                        ident: item_fn.sig.ident.clone(),
-                        arguments: syn::PathArguments::None,
-                    });
-
                     let old_fn_call = syn::Expr::Call(syn::ExprCall {
-                        attrs: Vec::new(),
-                        func: Box::new(syn::Expr::Path(syn::ExprPath {
-                            attrs: Vec::new(),
-                            qself: None,
-                            path: syn::Path {
-                                leading_colon: None,
-                                segments: old_fn_call_name_segments,
-                            }
-                        })),
-                        paren_token: Paren::default(),
-                        args: call_old_fn_args,
-                    });
-
-                    let ok_wrapper_call = syn::Stmt::Expr(syn::Expr::Call(syn::ExprCall {
                         attrs: Vec::new(),
                         func: Box::new(syn::Expr::Path(syn::ExprPath {
                             attrs: Vec::new(),
@@ -320,7 +320,7 @@ impl UntrustedRustProject {
                                 segments: {
                                     let mut segments = Punctuated::new();
                                     segments.push(syn::PathSegment {
-                                        ident: syn::Ident::new("Ok", Span::call_site()),
+                                        ident: item_fn.sig.ident.clone(),
                                         arguments: syn::PathArguments::None,
                                     });
                                     segments
@@ -328,40 +328,32 @@ impl UntrustedRustProject {
                             }
                         })),
                         paren_token: Paren::default(),
-                        args: {
-                            let mut args = Punctuated::new();
-                            args.push(old_fn_call);
-                            args
-                        }
-                    }), None);
-
-                    let new_fn_block = syn::Block {
-                        brace_token: item_fn.block.brace_token.clone(),
-                        stmts: vec![ok_wrapper_call],
-                    };
-
-                    let mut new_fn_attrs_segments = Punctuated::new();
-                    new_fn_attrs_segments.push(syn::PathSegment {
-                        ident: syn::Ident::new("plugin_fn", Span::call_site()),
-                        arguments: syn::PathArguments::None,
+                        args: call_old_fn_args,
                     });
+
+                    let ok_wrapper_call = if can_jsonify_ret_ty {
+                        let json_wrapper_call_expr = Self::create_call_expr("Json", &[&old_fn_call]);
+                        syn::Stmt::Expr(Self::create_call_expr("Ok", &[&json_wrapper_call_expr]), None)
+                    } else {
+                        syn::Stmt::Expr(Self::create_call_expr("Ok", &[&old_fn_call]), None)
+                    };
 
                     let mut new_fn_attrs = item_fn.attrs.clone();
                     new_fn_attrs.push(syn::Attribute {
                         pound_token: Token![#](Span::call_site()),
                         style: syn::AttrStyle::Outer,
                         bracket_token: Bracket::default(),
-                        meta: syn::Meta::Path(syn::Path {
-                            leading_colon: None,
-                            segments: new_fn_attrs_segments,
-                        }),
+                        meta: syn::Meta::Path(Self::create_simple_path(&["plugin_fn"])),
                     });
 
                     let new_fn_item = syn::Item::Fn(syn::ItemFn {
                         attrs: new_fn_attrs,
                         vis: item_fn.vis.clone(),
                         sig: new_fn_sig,
-                        block: Box::new(new_fn_block),
+                        block: Box::new(syn::Block {
+                            brace_token: item_fn.block.brace_token.clone(),
+                            stmts: vec![ok_wrapper_call],
+                        }),
                     });
 
                     items.insert(item_idx + 1, new_fn_item);
@@ -381,10 +373,47 @@ impl UntrustedRustProject {
             syn::Type::Path(syn::TypePath { path, .. }) => {
                 let path_as_str = path.to_token_stream().to_string();
 
+                println!("jsonify?: {}, options: {:?}", path_as_str, jsonify_typenames);
+
                 jsonify_typenames.contains(&path_as_str)
             }
             _ => false,
         }
+    }
+
+    fn create_simple_path(pathname: &[&str]) -> syn::Path {
+        syn::Path {
+            leading_colon: None,
+            segments: {
+                let mut segments = Punctuated::new();
+                for segment in pathname {
+                    segments.push(syn::PathSegment {
+                        ident: syn::Ident::new(segment, Span::call_site()),
+                        arguments: syn::PathArguments::None,
+                    });
+                }
+                segments
+            },
+        }
+    }
+
+    fn create_call_expr(fn_name: &str, args: &[&syn::Expr]) -> syn::Expr {
+        syn::Expr::Call(syn::ExprCall {
+            attrs: Vec::new(),
+            func: Box::new(syn::Expr::Path(syn::ExprPath {
+                attrs: Vec::new(),
+                qself: None,
+                path: Self::create_simple_path(&[fn_name]),
+            })),
+            paren_token: Paren::default(),
+            args: {
+                let mut new_args = Punctuated::new();
+                for arg in args {
+                    new_args.push((*arg).clone());
+                }
+                new_args
+            }
+        })
     }
 
     fn wrap_type(outer_type: &str, inner_types: &[&syn::Type]) -> syn::Type {
