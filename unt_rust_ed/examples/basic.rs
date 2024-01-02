@@ -49,6 +49,9 @@ fn main() {
             op: op.into(),
         };
 
+        use std::time::Instant;
+        let now = Instant::now();
+ 
         let outputs: Json<Outputs> = match compiled_project.call("process", Json(inputs)) {
             Ok(outputs) => outputs,
             Err(err) => {
@@ -57,6 +60,6 @@ fn main() {
             }
         };
 
-        println!("output: {:?}", outputs);
+        println!("output (elapsed: {:.2?}) {:?}", now.elapsed(), outputs);
     }
 }
