@@ -59,6 +59,7 @@ pub struct UntrustedRustProject {
     exported_host_types: HashMap<String, String>,
     /// type names to replace during compilation. May contain module separators ('::')
     sdk_types: HashSet<String>,
+    dependencies: HashSet<String>,
 }
 
 impl UntrustedRustProject {
@@ -70,7 +71,8 @@ impl UntrustedRustProject {
             runtime_timeout_ms: None,
             target: WasmCompileTarget::default(),
             exported_host_types: HashMap::new(),
-            sdk_types: HashSet::new(),          
+            sdk_types: HashSet::new(),   
+            dependencies: HashSet::new(),       
         }
     }
 
@@ -114,6 +116,11 @@ impl UntrustedRustProject {
         self
     }
 
+    pub fn with_dependency(mut self, dep: &str) -> Self {
+        self.dependencies.insert(dep.to_string());
+        self
+    }
+
     /// Converts the modules into compiled modules containing WASM
     pub fn compile(&self) -> Result<CompiledUntrustedRustProject> {
         // create temp directory
@@ -125,7 +132,7 @@ impl UntrustedRustProject {
         // setup cargo project by creating Cargo.toml in temp directory
         let cargo_toml_path = tmp_cargo_dir.path().join("Cargo.toml");
 
-        Self::write_cargo_toml(cargo_toml_path)?;
+        self.write_cargo_toml(cargo_toml_path)?;
 
         // mkdir 'src' under tmp_cargo_dir
         let cargo_src_path = tmp_cargo_dir.path().join("src");
@@ -165,13 +172,13 @@ impl UntrustedRustProject {
         });
     }
 
-    fn write_cargo_toml<P: AsRef<Path>>(cargo_toml_path: P) -> Result<()> {
-      let mut cargo_toml_file = File::create(&cargo_toml_path).map_err(|err| UntRustedError::IoError {
+    fn write_cargo_toml<P: AsRef<Path>>(&self, cargo_toml_path: P) -> Result<()> {
+        let mut cargo_toml_file = File::create(&cargo_toml_path).map_err(|err| UntRustedError::IoError {
    resource: format!("{:?}", cargo_toml_path.as_ref()),
    err,
    })?;
 
-        let content = "[package]
+        let mut content: String = "[package]
     name = \"test-wasm\"
     version = \"0.1.0\"
     edition = \"2021\"
@@ -181,7 +188,12 @@ impl UntrustedRustProject {
 
     [dependencies]
     extism-pdk = \"1.0.0-rc1\"
-    serde = { version = \"1.0\", features = [\"derive\"] }";
+    serde = { version = \"1.0\", features = [\"derive\"] }".into();
+
+        for dep in &self.dependencies {
+            content.push('\n');
+            content.push_str(dep);
+        }
 
         cargo_toml_file.write_all(content.as_bytes()).map_err(|err| UntRustedError::IoError {
    resource: format!("{:?}", cargo_toml_path.as_ref()),
