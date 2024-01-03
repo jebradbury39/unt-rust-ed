@@ -159,10 +159,9 @@ impl UntrustedRustProject {
             manifest
         };
 
-        let plugin = Plugin::new(&manifest, [], self.target == WasmCompileTarget::Wasi)?;
-
         return Ok(CompiledUntrustedRustProject {
-            plugin,
+            manifest,
+            target: self.target,
         });
     }
 
@@ -510,11 +509,26 @@ impl UntrustedRustProject {
     }
 }
 
+#[derive(Clone, Debug)]
 pub struct CompiledUntrustedRustProject {
-    plugin: Plugin,
+    manifest: Manifest,
+    target: WasmCompileTarget,
 }
 
 impl CompiledUntrustedRustProject {
+    pub fn create_container(&self) -> Result<Container> {
+        let plugin = Plugin::new(&self.manifest, [], self.target == WasmCompileTarget::Wasi)?;
+        Ok(Container {
+            plugin,
+        })
+    }
+}
+
+pub struct Container {
+    plugin: Plugin,
+}
+
+impl Container {
     /// fn_name may have module prefixes (e.g. `foo::exported_fn`)
     /// The '::' is converted to '_'
     pub fn call<'a, 'b, T: ToBytes<'a>, U: FromBytes<'b>>(
@@ -550,9 +564,11 @@ mod tests {
 
         let project = UntrustedRustProject::new(rust_code);
 
-        let mut compiled_project = project.compile().unwrap();
+        let compiled_project = project.compile().unwrap();
 
-        let outputs: i32 = compiled_project.call("add2", 10).unwrap();
+        let mut container = compiled_project.create_container().unwrap();
+
+        let outputs: i32 = container.call("add2", 10).unwrap();
 
         assert_eq!(12, outputs);
     }

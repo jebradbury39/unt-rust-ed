@@ -38,7 +38,9 @@ fn main() {
         .with_exported_host_type::<Inputs>()
         .with_exported_host_type::<Outputs>();
 
-    let mut compiled_project = project.compile().unwrap();
+    let compiled_project = project.compile().unwrap();
+
+    let mut container = compiled_project.create_container().unwrap();
 
     let ops = ["", "oom", "timeout"];
 
@@ -52,7 +54,7 @@ fn main() {
         use std::time::Instant;
         let now = Instant::now();
  
-        let outputs: Json<Outputs> = match compiled_project.call("process", Json(inputs)) {
+        let outputs: Json<Outputs> = match container.call("process", Json(inputs)) {
             Ok(outputs) => outputs,
             Err(err) => {
                 println!("Hit error when calling 'process': {}", err);

@@ -25,9 +25,11 @@ fn main() {
   let project = UntrustedRustProject::new(rust_code)
     .with_exported_host_type::<Inputs>();                   
                                                                                 
-  let mut compiled_project = project.compile().unwrap();                  
+  let compiled_project = project.compile().unwrap();
+
+  let mut container = compiled_project.create_container().unwrap();            
                                                                                 
-  let outputs: i32 = compiled_project.call("add", Inputs::new(10, 2)).unwrap();          
+  let outputs: i32 = container.call("add", Inputs::new(10, 2)).unwrap();          
                                                                                 
   println!("output: {}", outputs); // prints "12"
 }
