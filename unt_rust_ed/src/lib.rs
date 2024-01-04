@@ -8,6 +8,8 @@ use std::time::Duration;
 use std::ops::Deref;
 use std::collections::{HashSet, HashMap};
 
+use log::debug;
+
 use extism::{Manifest, Plugin, Wasm, ToBytes, FromBytes};
 pub use extism_manifest::MemoryOptions;
 pub use extism_convert::Json;
@@ -205,6 +207,8 @@ impl UntrustedRustProject {
 
     fn write_rust_code_to_cargo_dir<P: AsRef<Path>>(&self, cargo_src_path: P) -> Result<()> {
 
+        debug!("write rust code to cargo dir: {:?}", cargo_src_path.as_ref());
+
         let mut rust_code = self.rust_code.clone();
 
         // add exported type defs
@@ -235,6 +239,8 @@ impl UntrustedRustProject {
         });
         ast.items.insert(0, use_extism_item);
 
+        debug!("added use extism");
+
         let mut jsonify_typenames = HashSet::new();
         for (typename, _) in &self.exported_host_types {
             jsonify_typenames.insert(typename.clone());
@@ -246,7 +252,11 @@ impl UntrustedRustProject {
 
         Self::tag_functions_for_export(&mut ast.items, "", &jsonify_typenames)?;
 
+        debug!("start unparse of ast");
+
         let new_rust_code = prettyplease::unparse(&ast);
+
+        debug!("write new rust code to lib.rs");
 
         let lib_rs_path = cargo_src_path.as_ref().join("lib.rs");
         let mut lib_rs_file = File::create(&lib_rs_path).map_err(|err| UntRustedError::IoError {
@@ -259,10 +269,14 @@ impl UntrustedRustProject {
    err,
    })?;
 
+        debug!("done");
+
         return Ok(());
     }
 
     fn tag_functions_for_export(items: &mut Vec<syn::Item>, mod_names: &str, jsonify_typenames: &HashSet<String>) -> Result<()> {
+        debug!("start tag functions for export (mod_names={}, jsonify_typenames={:?})", mod_names, jsonify_typenames);
+
         let mut item_idx: usize = 0;
         while item_idx < items.len() {
 
@@ -404,6 +418,7 @@ impl UntrustedRustProject {
             item_idx += 1;
         }
 
+        debug!("tag_functions_for_export done");
         return Ok(());
     }
 
