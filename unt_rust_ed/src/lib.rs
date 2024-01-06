@@ -508,6 +508,8 @@ impl UntrustedRustProject {
     }
 
     fn cargo_build_to_wasm<P: AsRef<Path>>(&self, cargo_dir: P) -> Result<PathBuf> {
+        debug!("start cargo build to wasm (dir={:?})", cargo_dir.as_ref());
+
         let cargo_output = Command::new("cargo")
             .args(["build", "--target", self.target.as_str(), "--release"])
             .current_dir(&cargo_dir)
@@ -516,10 +518,14 @@ impl UntrustedRustProject {
    err,
    })?;
 
+        debug!("cargo build completed, output: {:?}", cargo_output);
+
         // parse cargo output, find target
         //println!("cargo build output:\n{:?}", cargo_output);
 
         if !cargo_output.status.success() {
+            debug!("cargo build failed");
+
             let stdout_str = String::from_utf8_lossy(&cargo_output.stdout);
             let stderr_str = String::from_utf8_lossy(&cargo_output.stderr);
 
@@ -532,6 +538,7 @@ impl UntrustedRustProject {
             return Err(UntRustedError::UnknownCargoError(stdout_str.into(), stderr_str.into()));
         }
 
+        debug!("cargo build was a success");
         return Ok(cargo_dir.as_ref().join("target").join(self.target.as_str()).join("release/test_wasm.wasm"));
     }
 }
