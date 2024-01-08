@@ -1,4 +1,4 @@
-mod error;
+pub mod error;
 
 use std::fs::{self, File};
 use std::io::Write;
