@@ -10,6 +10,12 @@ pub enum UntRustedError {
     },
     #[error("Extism error: {0}")]
     Extism(extism::Error),
+    #[error("Serde reader error (resource={0}): {1}")]
+    SerdeReader(String, flexbuffers::ReaderError),
+    #[error("Serde error during deserialize (resource={0}): {1}")]
+    SerdeDeserialize(String, flexbuffers::DeserializationError),
+    #[error("Serde error during serialize (resource={0}): {1}")]
+    SerdeSerialize(String, flexbuffers::SerializationError),
     #[error("Syn error: {0}")]
     Syn(syn::Error),
     #[error("Missing target {0}, can install using `rustup target add {0}`")]
@@ -24,6 +30,8 @@ pub enum UntRustedError {
     RuntimeExceededTimeout(String),
     #[error("This external function call ({0}) attempted to allocate too much memory")]
     RuntimeExceededMemory(String),
+    #[error("Cached compiled project hash did not match, so recompiling the project")]
+    CachedHashMismatch,
 }
 
 impl From<extism::Error> for UntRustedError {

@@ -1,19 +1,21 @@
 pub mod error;
 
+use std::cmp::Ordering;
 use std::fs::{self, File};
-use std::io::Write;
+use std::io::{Write, Read};
 use std::path::{Path, PathBuf};
 use std::process::Command;
 use std::time::Duration;
 use std::ops::Deref;
 use std::collections::{HashSet, HashMap};
 
-use log::debug;
+use log::{debug, warn};
 
 use extism::{Manifest, Plugin, Wasm, ToBytes, FromBytes};
 pub use extism_manifest::MemoryOptions;
 pub use extism_convert::Json;
 
+use serde::{Serialize, Deserialize};
 use tempfile::TempDir;
 
 use syn::Token;
@@ -23,6 +25,8 @@ use syn::__private::Span;
 use syn::__private::ToTokens;
 
 use crate::error::*;
+
+type ProjectHash = String;
 
 pub trait ExportedHostType {
     fn typename() -> &'static str;
@@ -35,7 +39,7 @@ pub fn get_page_size() -> usize {
     return page_size::get();
 }
 
-#[derive(Default, Debug, Copy, Clone, Eq, PartialEq)]
+#[derive(Default, Debug, Copy, Clone, Eq, PartialEq, Serialize, Deserialize)]
 pub enum WasmCompileTarget {
     #[default]
     Lightweight,
@@ -53,6 +57,7 @@ impl WasmCompileTarget {
 
 #[derive(Debug, Clone)]
 pub struct UntrustedRustProject {
+    cache_path: Option<PathBuf>,
     rust_code: String,
     runtime_memory_options: MemoryOptions,
     runtime_timeout_ms: Option<u64>,
@@ -68,6 +73,7 @@ impl UntrustedRustProject {
 
     pub fn new(rust_code: &str) -> Self {
         Self {
+            cache_path: None,
             rust_code: rust_code.into(),
             runtime_memory_options: MemoryOptions::default(),
             runtime_timeout_ms: None,
@@ -76,6 +82,23 @@ impl UntrustedRustProject {
             sdk_types: HashSet::new(),   
             dependencies: HashSet::new(),       
         }
+    }
+
+    fn calculate_hash(&self) -> ProjectHash {
+        let mut exported_host_types: Vec<String> = self.exported_host_types.iter().map(|(s1, s2)| format!("({}+{})", s1, s2)).collect();
+        exported_host_types.sort();
+        
+        let mut sdk_types: Vec<String> = self.sdk_types.iter().map(String::clone).collect();
+        sdk_types.sort();
+        
+        let hashable = format!("{}+{:?}+{:?}+{:?}", self.rust_code, self.target, exported_host_types, sdk_types);
+
+        return sha256::digest(hashable);
+    }
+
+    pub fn with_caching<P: AsRef<Path>>(mut self, cache_path: P) -> Self {
+        self.cache_path = Some(cache_path.as_ref().to_path_buf());
+        self
     }
 
     pub fn with_max_memory_bytes(mut self, num_bytes: usize) -> Self {
@@ -123,8 +146,65 @@ impl UntrustedRustProject {
         self
     }
 
+    fn load_cached_compiled<P: AsRef<Path>>(cache_path: P, project_hash: &ProjectHash) -> Result<CompiledUntrustedRustProject> {
+        let fname = format!("{}.unt-rust-ed-c", cache_path.as_ref().to_str().unwrap());
+
+        let mut file = File::open(&fname)
+            .map_err(|err| UntRustedError::IoError { resource: fname.clone(), err })?;
+
+        let mut buf = Vec::new();
+        file.read_to_end(&mut buf).map_err(|err| UntRustedError::IoError { resource: fname.clone(), err })?;
+
+        let reader = flexbuffers::Reader::get_root(buf.as_slice()).map_err(|err| UntRustedError::SerdeReader(fname.clone(), err))?;
+
+        let cached_compiled_project = CompiledUntrustedRustProject::deserialize(reader).map_err(|err| UntRustedError::SerdeDeserialize(fname.clone(), err))?;
+
+        // check that the hash matches
+        if cached_compiled_project.project_hash.cmp(project_hash) != Ordering::Equal {
+            return Err(UntRustedError::CachedHashMismatch);
+        }
+
+        return Ok(cached_compiled_project);
+    }
+
+    fn save_cached_compiled<P: AsRef<Path>>(cache_path: P, compiled_project: &CompiledUntrustedRustProject) -> Result<()> {
+        let fname = format!("{}.unt-rust-ed-c", cache_path.as_ref().to_str().unwrap());
+
+        let mut file = File::create(&fname).map_err(|err| UntRustedError::IoError { resource: fname.clone(), err })?;
+
+        let mut s = flexbuffers::FlexbufferSerializer::new();
+        compiled_project.serialize(&mut s).map_err(|err| UntRustedError::SerdeSerialize(fname.clone(), err))?;
+
+        file.write_all(s.view()).map_err(|err| UntRustedError::IoError { resource: fname.clone(), err })?;
+
+        return Ok(());
+    }
+
     /// Converts the modules into compiled modules containing WASM
     pub fn compile(&self) -> Result<CompiledUntrustedRustProject> {
+        let project_hash: ProjectHash = self.calculate_hash();
+
+        if let Some(cache_path) = &self.cache_path {
+            match Self::load_cached_compiled(cache_path, &project_hash) {
+                Ok(mut cached_compiled_project) => {
+
+                    // make sure the manifest is using the correct/updated options
+                    cached_compiled_project.manifest = cached_compiled_project.manifest
+                        .disallow_all_hosts()
+                        .with_memory_options(self.runtime_memory_options.clone());
+
+                    if let Some(runtime_timeout_ms) = self.runtime_timeout_ms {
+                        cached_compiled_project.manifest = cached_compiled_project.manifest.with_timeout(Duration::from_millis(runtime_timeout_ms));
+                    }
+
+                    return Ok(cached_compiled_project);
+                },
+                Err(err) => {
+                    warn!("unable to load cached compiled project: {}", err);
+                }
+            }
+        }
+
         // create temp directory
         let tmp_cargo_dir = TempDir::new().map_err(|err| UntRustedError::IoError {
    resource: "TempDir".into(),
@@ -156,7 +236,7 @@ impl UntrustedRustProject {
    err,
    })?;
 
-      let wasm = Wasm::data(built_wasm_bytes);
+        let wasm = Wasm::data(built_wasm_bytes);
 
         let manifest = Manifest::new(vec![wasm])
             .disallow_all_hosts()
@@ -168,10 +248,23 @@ impl UntrustedRustProject {
             manifest
         };
 
-        return Ok(CompiledUntrustedRustProject {
+        let compiled_project = CompiledUntrustedRustProject {
+            project_hash,
             manifest,
             target: self.target,
-        });
+        };
+
+        if let Some(cache_path) = &self.cache_path {
+            // save to file
+            match Self::save_cached_compiled(cache_path, &compiled_project) {
+                Ok(_) => (),
+                Err(err) => {
+                    warn!("failed to cache compiled project to file: {}", err);
+                }
+            }
+        }
+
+        return Ok(compiled_project);
     }
 
     fn write_cargo_toml<P: AsRef<Path>>(&self, cargo_toml_path: P) -> Result<()> {
@@ -543,8 +636,10 @@ impl UntrustedRustProject {
     }
 }
 
-#[derive(Clone, Debug)]
+
+#[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct CompiledUntrustedRustProject {
+    project_hash: ProjectHash,
     manifest: Manifest,
     target: WasmCompileTarget,
 }
